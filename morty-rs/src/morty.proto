@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package morty.messages;
+
+message BeaconPresentMsg {
+  int64 timestamp = 1;
+}
+
+message GPSMsg {
+  int32 utc = 1;
+  double latitude = 2;
+  double longitude = 3;
+  int32 fix_quality = 4;
+  int32 satellites = 5;
+  float hdop = 6;
+  string uid = 7;
+}
+
+message RelayMsg {
+  string src = 1 ;
+  int64 timestamp = 2;
+  oneof msg {
+    GPSMsg gps = 3;
+  }
+}
+
+message MortyMessage {
+  oneof msg {
+    BeaconPresentMsg beacon_present = 1;
+    GPSMsg gps = 2;
+    RelayMsg relay = 3;
+  }
+}

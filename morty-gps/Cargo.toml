@@ -1,0 +1,37 @@
+[package]
+name = "morty-gps"
+version = "0.1.0"
+authors = ["Wouter de Bie <wouter@evenflow.nl>"]
+edition = "2021"
+resolver = "2"
+
+[profile.release]
+opt-level = "s"
+
+[profile.dev]
+debug = true # Symbols are nice and they don't increase the size on Flash
+opt-level = "z"
+
+[features]
+pio = ["esp-idf-sys/pio"]
+
+[patch.crates-io]
+esp-idf-svc = { git = "https://github.com/esp-rs/esp-idf-svc.git", rev = "9741d9a"}
+
+[dependencies]
+anyhow = { version = "1", features = ["backtrace"] }
+esp-idf-hal = "0.40"
+esp-idf-svc = "0.45.0"
+esp-idf-sys = { version = "0.32.1", features = ["binstart"] }
+log = "0.4.17"
+morty-rs = {path = "../morty-rs"}
+nmea0183 = "0.3.0"
+prost = "0.11.8"
+uuid = {version = "1.3.0", features = ["v4"] }
+
+[build-dependencies]
+embuild = "0.31.1"
+
+[package.metadata.espflash]
+partition_table = "partitions.csv" # Supports CSV and binary formats
+

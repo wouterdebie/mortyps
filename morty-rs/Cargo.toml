@@ -1,0 +1,26 @@
+[package]
+name = "morty-rs"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[patch.crates-io]
+esp-idf-svc = { git = "https://github.com/esp-rs/esp-idf-svc.git", rev = "9741d9a"}
+
+[dependencies]
+anyhow = { version = "1", features = ["backtrace"] }
+crc8 = "0.1.1"
+esp-idf-hal = "0.40"
+esp-idf-svc = "0.45.0"
+esp-idf-sys = { version = "0.32.1", features = ["binstart"] }
+hexdump = "0.1.1"
+log = "0.4.17"
+prost = "0.11.8"
+queues = "1.1.0"
+smart-leds = "0.3.0"
+ws2812-esp32-rmt-driver = "0.5.0"
+
+[build-dependencies]
+prost-build = "0.11.8"
+

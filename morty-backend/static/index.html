@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>MortyPS</title>
+    <link rel="stylesheet" href="/static/leaflet.css" />
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <div id="map"></div>
+    <script src="/static/leaflet.js"></script>
+    <script src="/static/jquery.js"></script>
+    <script>
+      let mapOptions = {
+        center: [29.919964, -90.093658],
+        zoom: 19,
+      };
+
+      let map = new L.map("map", mapOptions);
+      map.zoomControl.setPosition("topright");
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution: "© OpenStreetMap",
+      }).addTo(map);
+
+      let markers = {};
+      let circles = {};
+
+      function timestampDisplay(timestamp) {
+        const relativeTimestamp = new Date() - new Date(timestamp * 1000);
+        if (relativeTimestamp < 60000) {
+          return "less than a minute ago";
+        }
+        const minutes = Math.round(relativeTimestamp / 60000);
+        if (minutes === 1) {
+          return "1 minute ago";
+        }
+        return minutes + " minutes ago";
+      }
+
+      function create_popup_content(source, last_seen) {
+        let name = source.name ? source.name : source.id;
+        let timestamp = last_seen.timestamp;
+        let popup_content = `<p>${name}<br />Last seen ${timestampDisplay(
+          last_seen.timestamp
+        )}<br />${timestamp}</p>`;
+        return popup_content;
+      }
+
+      $.getJSON("/api/v1/sources/locations/last_seen", function (data) {
+        $.each(data, (i, source) => {
+          let last_seen = source.locations[0];
+          let accuracy = 2.5 + last_seen.hdop;
+          let lat = last_seen.latitude;
+          let lon = last_seen.longitude;
+          let marker = new L.Marker([lat, lon], {
+            title: source.name,
+          });
+
+          let circle = new L.Circle([lat, lon], {
+            radius: accuracy,
+            color: "blue",
+            fillColor: "#0000ff",
+            fillOpacity: 0.5,
+          });
+          circles[source.id] = circle;
+          circle.addTo(map);
+
+          marker.bindPopup(create_popup_content(source, last_seen));
+
+          markers[source.id] = marker;
+          marker.addTo(map);
+        });
+      });
+
+      function updateMarkers() {
+        $.getJSON("/api/v1/sources/locations/last_seen", function (data) {
+          $.each(data, (i, source) => {
+            let last_seen = source.locations[0];
+            let accuracy = 2.5 + last_seen.hdop;
+            let lat = last_seen.latitude;
+            let lon = last_seen.longitude;
+            let marker = markers[source.id];
+            marker.setLatLng([lat, lon]);
+
+            marker
+              .getPopup()
+              .setContent(create_popup_content(source, last_seen));
+
+            let circle = circles[source.id];
+            circle.setLatLng([lat, lon]);
+            circle.setRadius(accuracy);
+          });
+        });
+      }
+
+      setInterval(updateMarkers, 5000);
+    </script>
+  </body>
+</html>

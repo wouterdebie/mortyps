@@ -1,0 +1,14 @@
+indexes:
+
+- kind: location
+  ancestor: yes
+  properties:
+  - name: timestamp
+    direction: desc
+
+- kind: location
+  ancestor: yes
+  properties:
+  - name: fix_quality
+  - name: timestamp
+    direction: desc
