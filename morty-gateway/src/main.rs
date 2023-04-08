@@ -129,7 +129,6 @@ fn uart_task(
     loop {
         buffer.clear();
         reader.read_line(&mut buffer)?;
-        info!("Received message: {}", buffer.trim());
         if &buffer[0..8] != "MORTYGPS" {
             warn!("Received invalid message: {}", buffer);
         } else {
@@ -142,8 +141,7 @@ fn uart_task(
             let morty_msg = decode_msg(bytes.unwrap().as_slice());
             match morty_msg {
                 Ok(Some(Msg::Relay(relay_msg))) => {
-                    handle_relay_message(relay_msg, &mut cache).unwrap();
-                    led.blink_color(colors::BLUE, LED_BRIGHTNESS, Duration::from_millis(500), 2)?;
+                    handle_relay_message(relay_msg, &mut cache, &mut led).unwrap();
                 }
                 Ok(msg) => {
                     warn!("Received unknown message: {:?}", msg);
@@ -159,6 +157,7 @@ fn uart_task(
 fn handle_relay_message(
     relay_message: morty_rs::messages::RelayMsg,
     cache: &mut IdCache,
+    led: &mut Led,
 ) -> Result<(), anyhow::Error> {
     match relay_message.msg {
         Some(morty_rs::messages::relay_msg::Msg::Gps(gps)) => {
@@ -216,6 +215,19 @@ fn handle_relay_message(
                 }
 
                 cache.add(&gps.uid);
+                led.blink_color(
+                    colors::PURPLE,
+                    LED_BRIGHTNESS,
+                    Duration::from_millis(300),
+                    2,
+                )?;
+            } else {
+                led.blink_color(
+                    colors::ORANGE,
+                    LED_BRIGHTNESS,
+                    Duration::from_millis(300),
+                    2,
+                )?;
             }
         }
         _ => {
@@ -234,6 +246,8 @@ unsafe extern "C" fn handler(
             ..
         } => {
             error!("HTTP_EVENT_ERROR");
+            // restart device
+            esp_idf_sys::esp_restart();
         }
         esp_idf_sys::esp_http_client_event_t {
             event_id: esp_idf_sys::esp_http_client_event_id_t_HTTP_EVENT_ON_DATA,
@@ -243,7 +257,7 @@ unsafe extern "C" fn handler(
         } => {
             let data = unsafe { std::slice::from_raw_parts(data as *const u8, data_len as usize) };
             let data = std::str::from_utf8(data).unwrap();
-            info!("HTTP_EVENT_ON_DATA: {:?}", data);
+            info!("Backend response: {:?}", data);
         }
         _ => {}
     }

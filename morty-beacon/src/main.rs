@@ -194,7 +194,12 @@ fn recv_data_task(
                 info!("Relay from {src}: {:?}", relay);
                 let data = encode_msg(&morty_message::Msg::Relay(relay));
                 uart_write(&uart, &data)?;
-                led.blink_color(colors::BLUE, LED_BRIGHTNESS, Duration::from_millis(100), 2)?;
+                led.blink_color(
+                    colors::YELLOW,
+                    LED_BRIGHTNESS,
+                    Duration::from_millis(300),
+                    2,
+                )?;
             }
             Ok(Some(morty_message::Msg::BeaconPresent(beacon))) => {
                 info!("Beacon from {src}: {:?}", beacon);

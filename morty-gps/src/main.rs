@@ -113,7 +113,7 @@ fn uart_task(
                             led.blink_color(
                                 colors::PURPLE,
                                 LED_BRIGHTNESS,
-                                Duration::from_millis(500),
+                                Duration::from_millis(300),
                                 2,
                             )?;
                         }
@@ -132,7 +132,7 @@ fn uart_task(
                             led.blink_color(
                                 colors::PURPLE,
                                 LED_BRIGHTNESS,
-                                Duration::from_millis(500),
+                                Duration::from_millis(300),
                                 2,
                             )?;
                         }
