@@ -1,8 +1,6 @@
 use anyhow::bail;
 use base64::engine::general_purpose;
 use base64::Engine;
-use embedded_svc::http;
-use embedded_svc::io::Write;
 use embedded_svc::wifi;
 use esp_idf_hal::cpu::Core;
 use esp_idf_hal::delay::BLOCK;
@@ -13,7 +11,6 @@ use esp_idf_hal::uart;
 use esp_idf_hal::uart::Uart;
 use esp_idf_hal::uart::UartDriver;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
-use esp_idf_svc::http::client::EspHttpConnection;
 use esp_idf_svc::netif::EspNetif;
 use esp_idf_svc::netif::EspNetifWait;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
@@ -27,31 +24,19 @@ use morty_rs::comm::decode_msg;
 use morty_rs::led::colors;
 use morty_rs::led::Led;
 use morty_rs::messages::morty_message::Msg;
-use morty_rs::messages::*;
 use morty_rs::utils::set_thread_spawn_configuration;
-use morty_rs::BEACON_PRESENT_INTERVAL_SECONDS;
-use prost::Message;
 use std::collections::VecDeque;
 use std::ffi::CString;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::io::Read;
 use std::net::Ipv4Addr;
-use std::string;
-use std::sync::mpsc::sync_channel;
-use std::sync::mpsc::Receiver;
-use std::sync::Arc;
 use std::time::Duration; // If using the `binstart` feature of `esp-idf-sys`, always keep this module imported
 
 const SSID: &str = "IoT";
 const PASS: &str = "EddieVedder7";
 
 const LED_BRIGHTNESS: u8 = 10;
-
-struct RecvData {
-    src: Vec<u8>,
-    data: Vec<u8>,
-}
 
 fn main() -> anyhow::Result<()> {
     esp_idf_svc::log::EspLogger::initialize_default();
