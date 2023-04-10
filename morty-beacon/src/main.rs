@@ -98,6 +98,14 @@ fn main() -> anyhow::Result<()> {
     wifi.set_configuration(&Configuration::Client(ClientConfiguration {
         ..Default::default()
     }))?;
+
+    unsafe {
+        esp_idf_sys::esp_wifi_set_protocol(
+            esp_idf_sys::wifi_interface_t_WIFI_IF_STA,
+            esp_idf_sys::WIFI_PROTOCOL_LR.try_into().unwrap(),
+        );
+    }
+
     wifi.start()?;
 
     // Channel for sending data to the recv thread

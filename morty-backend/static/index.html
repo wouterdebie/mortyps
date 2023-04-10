@@ -40,9 +40,13 @@
       function create_popup_content(source, last_seen) {
         let name = source.name ? source.name : source.id;
         let timestamp = last_seen.timestamp;
-        let popup_content = `<p>${name}<br />Last seen ${timestampDisplay(
-          last_seen.timestamp
-        )}<br />${timestamp}</p>`;
+        let charging = last_seen.charging;
+        let voltage = last_seen.battery_voltage.toFixed(2);
+        let popup_content = `<p><b>Name:</b> ${name}</p>
+        <p><b>Last seen:</b> ${timestampDisplay(last_seen.timestamp)}</p>
+        <p><b>Timestamp:</b> ${timestamp}</p>
+        <p><b>Charging:</b> ${charging}</p>
+        <p><b>Voltage:</b> ${voltage}V</p>`;
         return popup_content;
       }
 

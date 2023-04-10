@@ -26,7 +26,6 @@ use morty_rs::led::Led;
 use morty_rs::messages::morty_message::Msg;
 use morty_rs::utils::set_thread_spawn_configuration;
 use std::collections::VecDeque;
-use std::ffi::CString;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::io::Read;
@@ -65,6 +64,13 @@ fn main() -> anyhow::Result<()> {
         password: PASS.into(),
         ..Default::default()
     }))?;
+
+    unsafe {
+        esp_idf_sys::esp_wifi_set_protocol(
+            esp_idf_sys::wifi_interface_t_WIFI_IF_STA,
+            esp_idf_sys::WIFI_PROTOCOL_LR.try_into().unwrap(),
+        );
+    }
 
     wifi.start()?;
     if !WifiWait::new(&sysloop)?
@@ -168,19 +174,7 @@ fn handle_relay_message(
                     relay_message.src
                 );
 
-                let url = CString::new(uri.as_str()).unwrap();
-
-                let config_post = esp_idf_sys::esp_http_client_config_t {
-                    url: url.as_ptr() as _,
-                    method: esp_idf_sys::esp_http_client_method_t_HTTP_METHOD_POST,
-                    auth_type: esp_idf_sys::esp_http_client_auth_type_t_HTTP_AUTH_TYPE_NONE,
-                    transport_type:
-                        esp_idf_sys::esp_http_client_transport_t_HTTP_TRANSPORT_OVER_TCP,
-                    event_handler: Some(handler),
-                    ..Default::default()
-                };
-
-                let data = object! {
+                let json = object! {
                     "latitude": gps.latitude,
                     "longitude": gps.longitude,
                     "hdop": gps.hdop,
@@ -189,30 +183,42 @@ fn handle_relay_message(
                     "fix_quality": gps.fix_quality,
                     "satellites": gps.satellites,
                     "uid" : gps.uid.to_string(),
+                    "charging": gps.charging,
+                    "battery_voltage": gps.battery_voltage,
                 }
                 .dump();
 
-                let c_data = CString::new(data.as_str()).unwrap();
-                let c_header = CString::new("Content-Type").unwrap();
-                let c_header_value = CString::new("application/json").unwrap();
+                let data = json.as_bytes();
 
-                unsafe {
-                    let client = esp_idf_sys::esp_http_client_init(&config_post);
-                    esp_idf_sys::esp_http_client_set_timeout_ms(client, 10000);
-                    esp_idf_sys::esp_http_client_set_post_field(
-                        client,
-                        c_data.as_ptr() as _,
-                        data.len() as i32,
-                    );
-                    esp_idf_sys::esp_http_client_set_header(
-                        client,
-                        c_header.as_ptr() as _,
-                        c_header_value.as_ptr() as _,
-                    );
-                    esp_idf_sys::esp_http_client_perform(client);
-                    esp_idf_sys::esp_http_client_close(client);
-                    esp_idf_sys::esp_http_client_cleanup(client);
-                }
+                let mut client = embedded_svc::http::client::Client::wrap(
+                    esp_idf_svc::http::client::EspHttpConnection::new(
+                        &esp_idf_svc::http::client::Configuration {
+                            crt_bundle_attach: Some(esp_idf_sys::esp_crt_bundle_attach),
+
+                            ..Default::default()
+                        },
+                    )?,
+                );
+
+                let headers = [
+                    ("Content-Type", "application/json"),
+                    ("Content-Length", &format!("{}", data.len())),
+                ];
+
+                let mut request = client.post(&uri, &headers)?;
+                request.connection().write(data)?;
+                let mut response = request.submit()?;
+
+                let mut body = [0_u8; 128];
+                let read = embedded_svc::utils::io::try_read_full(&mut response, &mut body)
+                    .map_err(|err| err.0)?;
+                info!(
+                    "Response: {}",
+                    String::from_utf8_lossy(&body[..read]).into_owned().trim()
+                );
+                use embedded_svc::io::Read;
+                // Complete the response
+                while response.read(&mut body)? > 0 {}
 
                 cache.add(&gps.uid);
                 led.blink_color(
@@ -235,33 +241,6 @@ fn handle_relay_message(
         }
     }
     Ok(())
-}
-
-unsafe extern "C" fn handler(
-    evt: *mut esp_idf_sys::esp_http_client_event,
-) -> esp_idf_sys::esp_err_t {
-    match *evt {
-        esp_idf_sys::esp_http_client_event_t {
-            event_id: esp_idf_sys::esp_http_client_event_id_t_HTTP_EVENT_ERROR,
-            ..
-        } => {
-            error!("HTTP_EVENT_ERROR");
-            // restart device
-            esp_idf_sys::esp_restart();
-        }
-        esp_idf_sys::esp_http_client_event_t {
-            event_id: esp_idf_sys::esp_http_client_event_id_t_HTTP_EVENT_ON_DATA,
-            data,
-            data_len,
-            ..
-        } => {
-            let data = unsafe { std::slice::from_raw_parts(data as *const u8, data_len as usize) };
-            let data = std::str::from_utf8(data).unwrap();
-            info!("Backend response: {:?}", data);
-        }
-        _ => {}
-    }
-    esp_idf_sys::ESP_OK as _
 }
 
 struct UartRead<'a> {

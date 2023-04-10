@@ -14,6 +14,8 @@ message GPSMsg {
   int32 satellites = 5;
   float hdop = 6;
   string uid = 7;
+  bool charging = 8;
+  float battery_voltage = 9;
 }
 
 message RelayMsg {

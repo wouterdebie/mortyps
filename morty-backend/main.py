@@ -31,6 +31,8 @@ def store_location(source, location):
     lat = location['latitude']
     lon = location['longitude']
     hdop = location['hdop']
+    charging = location['charging']
+    battery_voltage = location['battery_voltage']
 
 
     time_now = pendulum.now()
@@ -46,6 +48,8 @@ def store_location(source, location):
         'satellites': int(location['satellites']),
         'expiry_timestamp': expiry_timestamp.timestamp(),
         'uid': location['uid'],
+        'charging': charging,
+        'battery_voltage': float(battery_voltage),
     })
     client.put(entity)
 

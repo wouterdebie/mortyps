@@ -6,3 +6,8 @@ html, body, #map {
     height: 100%;
     width: 100vw;
 }
+
+p {
+    line-height: 5px;   /* within paragraph */
+    margin-bottom: 30px; /* between paragraphs */
+}

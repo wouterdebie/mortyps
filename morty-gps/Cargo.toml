@@ -23,6 +23,7 @@ anyhow = { version = "1", features = ["backtrace"] }
 esp-idf-hal = "0.40"
 esp-idf-svc = "0.45.0"
 esp-idf-sys = { version = "0.32.1", features = ["binstart"] }
+lazy_static = "1.4.0"
 log = "0.4.17"
 morty-rs = {path = "../morty-rs"}
 nmea0183 = "0.3.0"
