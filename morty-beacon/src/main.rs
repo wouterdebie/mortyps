@@ -18,6 +18,7 @@ use esp_idf_svc::sntp::SyncStatus;
 use esp_idf_svc::systime::EspSystemTime;
 use esp_idf_svc::wifi::*;
 use esp_idf_sys as _;
+use esp_idf_sys::esp;
 use log::*;
 use morty_rs::comm::broadcast_data;
 use morty_rs::comm::broadcast_msg;
@@ -41,6 +42,7 @@ const PASS: &str = "EddieVedder7";
 
 const LED_BRIGHTNESS: u8 = 10;
 
+// Struct that is used to pass data from the recv callback to the thread that handles the data
 struct RecvData {
     src: Vec<u8>,
     data: Vec<u8>,
@@ -58,6 +60,10 @@ fn main() -> anyhow::Result<()> {
     let mut led = Led::new();
     led.start(pins.gpio18.into(), pins.gpio17.into())?;
     led.set_color(colors::DARK_ORANGE, LED_BRIGHTNESS)?;
+
+    // For the beacon, we start in client mode and connect to the wifi network. This is so we can
+    // update the system time via SNTP. Once we have the time, we disconnect from the wifi network
+    // and switch to ESP-NOW mode, since regular wifi and ESP-NOW cannot be used at the same time.
 
     let mut wifi = Box::new(EspWifi::new(peripherals.modem, sysloop.clone(), Some(nvs))?);
     wifi.set_configuration(&Configuration::Client(ClientConfiguration {
@@ -86,11 +92,8 @@ fn main() -> anyhow::Result<()> {
     }
 
     led.set_color(colors::ORANGE, LED_BRIGHTNESS)?;
-
     // Update system time
     update_sntp()?;
-
-    led.set_color(colors::GREEN, LED_BRIGHTNESS)?;
 
     // Disconnect from wifi and setup for ESP-NOW
     wifi.disconnect()?;
@@ -99,20 +102,22 @@ fn main() -> anyhow::Result<()> {
         ..Default::default()
     }))?;
 
-    unsafe {
+    esp!(unsafe {
         esp_idf_sys::esp_wifi_set_protocol(
             esp_idf_sys::wifi_interface_t_WIFI_IF_STA,
             esp_idf_sys::WIFI_PROTOCOL_LR.try_into().unwrap(),
-        );
-    }
+        )
+    })?;
 
     wifi.start()?;
+
+    led.set_color(colors::GREEN, LED_BRIGHTNESS)?;
 
     // Channel for sending data to the recv thread
     let (recv_data_sender, recv_data_receiver) = sync_channel::<RecvData>(2);
 
-    // Callback function for receiving data. This is executed on the main thread, so we keep this
-    // as short as possible. We send the data to the recv thread via a channel.
+    // Callback function for receiving data. This is executed on core0 (because wifi is started here),
+    // so we keep this as short as possible. We send the data to the recv thread via a channel.
     let esp_now_recv_cb = move |src: &[u8], data: &[u8]| {
         info!("Data recv from {}, len {}", mac_to_string(src), data.len());
         let recv_data = RecvData {
@@ -127,8 +132,8 @@ fn main() -> anyhow::Result<()> {
     esp_now.register_recv_cb(esp_now_recv_cb).unwrap();
 
     let beacon_espnow = esp_now.clone();
-    // Spawn the beacon present thread on core 0
-    set_thread_spawn_configuration("beacon-thread", 4196, 15, None)?;
+    // Spawn the beacon present thread
+    set_thread_spawn_configuration("beacon-thread\0", 4196, 15, None)?;
     let beacon_thread = std::thread::Builder::new()
         .stack_size(4196)
         .spawn(move || loop {
@@ -140,7 +145,7 @@ fn main() -> anyhow::Result<()> {
         })?;
 
     // Spawn the recv thread on core 1
-    set_thread_spawn_configuration("recv-thread", 8196, 15, Some(Core::Core1))?;
+    set_thread_spawn_configuration("recv-thread\0", 8196, 15, Some(Core::Core1))?;
     let recv_thread = std::thread::Builder::new()
         .stack_size(8196)
         .spawn(move || {
@@ -160,6 +165,7 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Receive data from ESP-NOW, decode it, forward it to other beacons and write it to UART
 fn recv_data_task(
     uart: impl Peripheral<P = impl Uart> + 'static,
     tx: gpio::AnyOutputPin,
@@ -171,9 +177,16 @@ fn recv_data_task(
     let uart = uart_init(uart, tx, rx)?;
 
     loop {
+        // Wait for data
         let recv_data = recv_data_receiver.recv().unwrap();
+
+        // Decode the mac address and message
         let src = mac_to_string(recv_data.src.as_slice());
         match decode_msg(&recv_data.data) {
+
+            // If we receive a beacon present message, we forward it to other beacons
+            // by wrapping it in a RelayMsg and sending it over ESP-NOW as well as
+            // writing it to UART for the gateway.
             Ok(Some(morty_message::Msg::Gps(gps))) => {
                 info!("GPS from {src}: {:?}", gps);
                 let now = EspSystemTime.now().as_secs() as i64;
@@ -198,6 +211,9 @@ fn recv_data_task(
                     2,
                 )?;
             }
+
+            // If we receive a relay message, we don't forward it to other beacons, but only
+            // write it to UART for the gateway.
             Ok(Some(morty_message::Msg::Relay(relay))) => {
                 info!("Relay from {src}: {:?}", relay);
                 let data = encode_msg(&morty_message::Msg::Relay(relay));
@@ -209,6 +225,9 @@ fn recv_data_task(
                     2,
                 )?;
             }
+
+            // Beacon present messages are received but ignored. Maybe they have a use in the
+            // future.
             Ok(Some(morty_message::Msg::BeaconPresent(beacon))) => {
                 info!("Beacon from {src}: {:?}", beacon);
             }
@@ -222,6 +241,7 @@ fn recv_data_task(
     }
 }
 
+/// Because we need to add timestamps to relay messages we have to wait for SNTP to sync.
 fn update_sntp() -> Result<(), anyhow::Error> {
     let sntp = esp_idf_svc::sntp::EspSntp::new_default()?;
     while sntp.get_sync_status() != SyncStatus::Completed {
@@ -251,6 +271,7 @@ fn uart_init(
     Ok(uart_driver)
 }
 
+/// Write data to UART. The data is base64 encoded and prefixed with a header.
 fn uart_write(uart: &UartDriver, data: &[u8]) -> Result<(), anyhow::Error> {
     const UART_HEADER: &str = "MORTYGPS";
     let b64_encoded = general_purpose::STANDARD.encode(data);

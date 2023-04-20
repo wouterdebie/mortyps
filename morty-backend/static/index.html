@@ -24,6 +24,7 @@
 
       let markers = {};
       let circles = {};
+      let poly_lines = {};
 
       function timestampDisplay(timestamp) {
         const relativeTimestamp = new Date() - new Date(timestamp * 1000);
@@ -37,14 +38,17 @@
         return minutes + " minutes ago";
       }
 
-      function create_popup_content(source, last_seen) {
+      function create_popup_content(source) {
+        console.log(source);
         let name = source.name ? source.name : source.id;
-        let timestamp = last_seen.timestamp;
-        let charging = last_seen.charging;
-        let voltage = last_seen.battery_voltage.toFixed(2);
-        let popup_content = `<p><b>Name:</b> ${name}</p>
-        <p><b>Last seen:</b> ${timestampDisplay(last_seen.timestamp)}</p>
-        <p><b>Timestamp:</b> ${timestamp}</p>
+        let charging = source.last_ping.charging;
+        let voltage = source.last_ping.battery_voltage.toFixed(2);
+        let popup_content = `
+        <p><b>Name:</b> ${name}</p>
+        <p><b>Last location:</b> ${timestampDisplay(
+          source.locations[0].timestamp
+        )}</p>
+        <p><b>Last ping:</b> ${timestampDisplay(source.last_ping.timestamp)}</p>
         <p><b>Charging:</b> ${charging}</p>
         <p><b>Voltage:</b> ${voltage}V</p>`;
         return popup_content;
@@ -70,9 +74,25 @@
           circle.addTo(map);
 
           marker.bindPopup(create_popup_content(source, last_seen));
-
           markers[source.id] = marker;
           marker.addTo(map);
+
+          let path = [];
+          for (let i = 0; i < 20; i++) {
+            let location = source.locations[i];
+            path.push([location.latitude, location.longitude]);
+          }
+          console.log(path);
+
+          let poly_line = new L.Polyline(path, {
+            color: "blue",
+            weight: 3,
+            opacity: 0.5,
+            smoothFactor: 1,
+          });
+
+          poly_lines[source.id] = poly_line;
+          poly_line.addTo(map);
         });
       });
 
@@ -81,18 +101,22 @@
           $.each(data, (i, source) => {
             let last_seen = source.locations[0];
             let accuracy = 2.5 + last_seen.hdop;
-            let lat = last_seen.latitude;
-            let lon = last_seen.longitude;
             let marker = markers[source.id];
-            marker.setLatLng([lat, lon]);
+            marker.setLatLng([last_seen.latitude, last_seen.longitude]);
 
-            marker
-              .getPopup()
-              .setContent(create_popup_content(source, last_seen));
+            marker.getPopup().setContent(create_popup_content(source));
 
             let circle = circles[source.id];
-            circle.setLatLng([lat, lon]);
+            circle.setLatLng([last_seen.latitude, last_seen.longitude]);
             circle.setRadius(accuracy);
+
+            let path = [];
+            for (let i = 0; i < 20; i++) {
+              let location = source.locations[i];
+              path.push([location.latitude, location.longitude]);
+            }
+
+            poly_lines[source.id].setLatLngs(path);
           });
         });
       }

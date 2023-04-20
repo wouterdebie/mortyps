@@ -97,6 +97,7 @@ def last_locations():
     sources = fetch_sources()
     for source in sources:
         source['locations'] = source_locations_last_seen(source["id"], 100)
+        source['last_ping'] = last_ping(source["id"])[0]
     return sources
 
 @app.route('/api/v1/source/<source>/location/last_seen', methods=['GET'])
@@ -108,7 +109,6 @@ def last_location(source):
     result = list(query.fetch(limit=1))
     if len(result) == 0:
         return {}
-
     return result[0]
 
 @app.route('/api/v1/source/<source>/location/last_ping', methods=['GET'])

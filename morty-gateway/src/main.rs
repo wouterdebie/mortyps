@@ -3,13 +3,11 @@ use base64::engine::general_purpose;
 use base64::Engine;
 use embedded_svc::wifi;
 use esp_idf_hal::cpu::Core;
-use esp_idf_hal::delay::BLOCK;
 use esp_idf_hal::gpio;
 use esp_idf_hal::peripheral::Peripheral;
 use esp_idf_hal::prelude::*;
 use esp_idf_hal::uart;
 use esp_idf_hal::uart::Uart;
-use esp_idf_hal::uart::UartDriver;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::netif::EspNetif;
 use esp_idf_svc::netif::EspNetifWait;
@@ -25,10 +23,10 @@ use morty_rs::led::colors;
 use morty_rs::led::Led;
 use morty_rs::messages::morty_message::Msg;
 use morty_rs::utils::set_thread_spawn_configuration;
+use morty_rs::utils::UartRead;
 use std::collections::VecDeque;
 use std::io::BufRead;
 use std::io::BufReader;
-use std::io::Read;
 use std::net::Ipv4Addr;
 use std::time::Duration; // If using the `binstart` feature of `esp-idf-sys`, always keep this module imported
 
@@ -36,41 +34,28 @@ const SSID: &str = "IoT";
 const PASS: &str = "EddieVedder7";
 
 const LED_BRIGHTNESS: u8 = 10;
+const API_HOST: &str = "wouterdebie-personal.ue.r.appspot.com";
 
 fn main() -> anyhow::Result<()> {
     esp_idf_svc::log::EspLogger::initialize_default();
-    if esp_idf_sys::CONFIG_MAIN_TASK_STACK_SIZE < 20000 {
-        error!(
-            "stack too small: {} bail!",
-            esp_idf_sys::CONFIG_MAIN_TASK_STACK_SIZE
-        );
-        return Ok(());
-    }
 
     let sysloop = EspSystemEventLoop::take()?;
-
     let peripherals = Peripherals::take().unwrap();
     let pins = peripherals.pins;
-
     let nvs = EspDefaultNvsPartition::take()?;
 
+    // Configure the LED
     let mut led = Led::new();
     led.start(pins.gpio18.into(), pins.gpio17.into())?;
     led.set_color(colors::BLUE, LED_BRIGHTNESS)?;
 
+    // Configure the wifi
     let mut wifi = Box::new(EspWifi::new(peripherals.modem, sysloop.clone(), Some(nvs))?);
     wifi.set_configuration(&wifi::Configuration::Client(wifi::ClientConfiguration {
         ssid: SSID.into(),
         password: PASS.into(),
         ..Default::default()
     }))?;
-
-    unsafe {
-        esp_idf_sys::esp_wifi_set_protocol(
-            esp_idf_sys::wifi_interface_t_WIFI_IF_STA,
-            esp_idf_sys::WIFI_PROTOCOL_LR.try_into().unwrap(),
-        );
-    }
 
     wifi.start()?;
     if !WifiWait::new(&sysloop)?
@@ -96,8 +81,9 @@ fn main() -> anyhow::Result<()> {
     update_sntp()?;
 
     led.set_color(colors::GREEN, LED_BRIGHTNESS)?;
+
     // Spawn the recv thread on core 1
-    set_thread_spawn_configuration("recv-thread", 8196, 15, Some(Core::Core1))?;
+    set_thread_spawn_configuration("recv-thread\0", 8196, 15, Some(Core::Core1))?;
     let recv_thread = std::thread::Builder::new()
         .stack_size(8196)
         .spawn(move || {
@@ -108,6 +94,7 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+//// Receive RelayMsgs from a beacon over UART and send them as JSON to a server in the cloud.
 fn uart_task(
     uart: impl Peripheral<P = impl Uart> + 'static,
     tx: gpio::AnyOutputPin,
@@ -126,24 +113,29 @@ fn uart_task(
         &config,
     )?;
 
+    // Create a cache of the last 10 IDs we've seen, since we can have multiple messages with the
+    // same id, because a message might have been relayed by multiple beacons.
     let mut cache = IdCache::new(10);
 
     uart_driver.flush_read()?;
 
     let mut reader = BufReader::new(UartRead::new(uart_driver));
     let mut buffer = String::new();
+
     loop {
         buffer.clear();
         reader.read_line(&mut buffer)?;
         if &buffer[0..8] != "MORTYGPS" {
             warn!("Received invalid message: {}", buffer);
         } else {
+            // Decode Base64
             let bytes = general_purpose::STANDARD.decode(buffer[8..].trim());
             if bytes.is_err() {
                 error!("Unable to decode: {}", buffer);
                 continue;
             }
 
+            // Decode protobuf
             let morty_msg = decode_msg(bytes.unwrap().as_slice());
             match morty_msg {
                 Ok(Some(Msg::Relay(relay_msg))) => {
@@ -160,6 +152,7 @@ fn uart_task(
     }
 }
 
+// Handle the relay message
 fn handle_relay_message(
     relay_message: morty_rs::messages::RelayMsg,
     cache: &mut IdCache,
@@ -168,12 +161,15 @@ fn handle_relay_message(
     match relay_message.msg {
         Some(morty_rs::messages::relay_msg::Msg::Gps(gps)) => {
             info!("Received GPS: {:?}", gps);
+
+            // Check if we have already seen the message by its UID
             if !cache.contains(&gps.uid) {
                 let uri = format!(
-                    "https://wouterdebie-personal.ue.r.appspot.com/api/v1/source/{}/location",
+                    "https://{API_HOST}/api/v1/source/{}/location",
                     relay_message.src
                 );
 
+                // Create a json object
                 let json = object! {
                     "latitude": gps.latitude,
                     "longitude": gps.longitude,
@@ -190,6 +186,7 @@ fn handle_relay_message(
 
                 let data = json.as_bytes();
 
+                // Send stuff to the API server over HTTPS
                 let mut client = embedded_svc::http::client::Client::wrap(
                     esp_idf_svc::http::client::EspHttpConnection::new(
                         &esp_idf_svc::http::client::Configuration {
@@ -228,6 +225,7 @@ fn handle_relay_message(
                     2,
                 )?;
             } else {
+                // Blink the LED when it's a duplicate message
                 led.blink_color(
                     colors::ORANGE,
                     LED_BRIGHTNESS,
@@ -241,33 +239,6 @@ fn handle_relay_message(
         }
     }
     Ok(())
-}
-
-struct UartRead<'a> {
-    uart: UartDriver<'a>,
-}
-
-impl<'a> UartRead<'a> {
-    fn new(uart: UartDriver<'a>) -> Self {
-        Self { uart }
-    }
-}
-
-impl<'a> Read for UartRead<'a> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let mut b: [u8; 1] = [0];
-
-        match self.uart.read(&mut b, BLOCK) {
-            Ok(size) => {
-                buf[0] = b[0];
-                Ok(size)
-            }
-            Err(_) => Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Error reading from UART",
-            )),
-        }
-    }
 }
 
 fn update_sntp() -> Result<(), anyhow::Error> {

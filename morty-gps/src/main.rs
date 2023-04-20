@@ -31,6 +31,7 @@ use std::time::Duration;
 use uuid::Uuid; // If using the `binstart` feature of `esp-idf-sys`, always keep this module imported
 
 const LED_BRIGHTNESS: u8 = 10;
+const GPS_BAUDRATE: u32 = 9600;
 
 lazy_static! {
     static ref CHARGING: AtomicBool = AtomicBool::new(false);
@@ -84,7 +85,7 @@ fn uart_task(
     adc_peripheral: impl Peripheral<P = impl adc::Adc> + 'static,
     mut led: Led,
 ) -> Result<(), anyhow::Error> {
-    let config = uart::config::Config::default().baudrate(Hertz(9600));
+    let config = uart::config::Config::default().baudrate(Hertz(GPS_BAUDRATE));
 
     let uart_driver = uart::UartDriver::new(
         uart,
@@ -117,52 +118,48 @@ fn uart_task(
     let mut last_update = LastUpdate::new();
 
     loop {
-        if uart_driver.read(&mut buf, BLOCK).is_ok() {
-            if let Some(result) = nmea_parser.parse_from_byte(buf[0]) {
-                match result {
-                    Ok(ParseResult::GGA(Some(gga))) => {
-                        led.set_color(colors::GREEN, LED_BRIGHTNESS)?;
+        uart_driver.read(&mut buf, BLOCK)?;
+        match nmea_parser.parse_from_byte(buf[0]) {
+            Some(Ok(ParseResult::GGA(Some(gga)))) => {
+                led.set_color(colors::GREEN, LED_BRIGHTNESS)?;
 
-                        let msg = GpsMsg {
-                            latitude: gga.latitude.as_f64(),
-                            longitude: gga.longitude.as_f64(),
-                            satellites: gga.sat_in_use as i32,
-                            fix_quality: gga.gps_quality as i32,
-                            hdop: gga.hdop,
-                            utc: gga.time.hours as i32 * 3600
-                                + gga.time.minutes as i32 * 60
-                                + gga.time.seconds as i32,
-                            uid: Uuid::new_v4().to_string()[0..6].to_string(),
-                            ..Default::default()
-                        };
+                let msg = GpsMsg {
+                    latitude: gga.latitude.as_f64(),
+                    longitude: gga.longitude.as_f64(),
+                    satellites: gga.sat_in_use as i32,
+                    fix_quality: gga.gps_quality as i32,
+                    hdop: gga.hdop,
+                    utc: gga.time.hours as i32 * 3600
+                        + gga.time.minutes as i32 * 60
+                        + gga.time.seconds as i32,
+                    uid: Uuid::new_v4().to_string()[0..6].to_string(),
+                    ..Default::default()
+                };
 
-                        handle_message(
-                            Some(msg),
-                            &esp_now,
-                            &vbus_sense,
-                            &mut vbat_driver,
-                            &mut adc1,
-                            &mut led,
-                            &mut last_update,
-                        )?;
-                    }
-                    Ok(ParseResult::GGA(None)) => {
-                        led.set_color(colors::RED, LED_BRIGHTNESS)?;
-
-                        handle_message(
-                            None,
-                            &esp_now,
-                            &vbus_sense,
-                            &mut vbat_driver,
-                            &mut adc1,
-                            &mut led,
-                            &mut last_update,
-                        )?;
-                    }
-                    Ok(_) => {}
-                    Err(_) => {}
-                }
+                handle_message(
+                    Some(msg),
+                    &esp_now,
+                    &vbus_sense,
+                    &mut vbat_driver,
+                    &mut adc1,
+                    &mut led,
+                    &mut last_update,
+                )?;
             }
+            Some(Ok(ParseResult::GGA(None))) => {
+                led.set_color(colors::RED, LED_BRIGHTNESS)?;
+
+                handle_message(
+                    None,
+                    &esp_now,
+                    &vbus_sense,
+                    &mut vbat_driver,
+                    &mut adc1,
+                    &mut led,
+                    &mut last_update,
+                )?;
+            }
+            _ => {}
         }
     }
 }

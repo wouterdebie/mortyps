@@ -1,9 +1,10 @@
-use esp_idf_hal::task::thread::ThreadSpawnConfiguration;
+use esp_idf_hal::uart::UartDriver;
+use esp_idf_hal::{delay::BLOCK, task::thread::ThreadSpawnConfiguration};
 use esp_idf_svc::timer::EspTimerService;
 use esp_idf_sys::EspError;
 use hexdump::hexdump_iter;
 use log::*;
-use std::time::Duration;
+use std::{io::Read, time::Duration};
 
 pub struct LastUpdate {
     last_update: Duration,
@@ -62,4 +63,31 @@ pub fn tname() -> String {
         .name()
         .unwrap_or("unnamed")
         .to_string()
+}
+
+pub struct UartRead<'a> {
+    uart: UartDriver<'a>,
+}
+
+impl<'a> UartRead<'a> {
+    pub fn new(uart: UartDriver<'a>) -> Self {
+        Self { uart }
+    }
+}
+
+impl<'a> Read for UartRead<'a> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let mut b: [u8; 1] = [0];
+
+        match self.uart.read(&mut b, BLOCK) {
+            Ok(size) => {
+                buf[0] = b[0];
+                Ok(size)
+            }
+            Err(_) => Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Error reading from UART",
+            )),
+        }
+    }
 }
