@@ -1,4 +1,3 @@
-use anyhow::bail;
 use base64::engine::general_purpose;
 use base64::Engine;
 use embedded_svc::wifi::ClientConfiguration;
@@ -11,12 +10,8 @@ use esp_idf_hal::uart;
 use esp_idf_hal::uart::Uart;
 use esp_idf_hal::uart::UartDriver;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
-use esp_idf_svc::netif::EspNetif;
-use esp_idf_svc::netif::EspNetifWait;
-use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::sntp::SyncStatus;
 use esp_idf_svc::systime::EspSystemTime;
-use esp_idf_svc::wifi::*;
 use esp_idf_sys as _;
 use esp_idf_sys::esp;
 use log::*;
@@ -26,18 +21,18 @@ use morty_rs::comm::decode_msg;
 use morty_rs::comm::encode_msg;
 use morty_rs::comm::esp_now_init;
 use morty_rs::comm::mac_to_string;
+use morty_rs::comm::start_wifi;
 use morty_rs::led::colors;
 use morty_rs::led::Led;
 use morty_rs::messages::*;
 use morty_rs::utils::set_thread_spawn_configuration;
 use morty_rs::BEACON_PRESENT_INTERVAL_SECONDS;
-use std::net::Ipv4Addr;
 use std::sync::mpsc::sync_channel;
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 use std::time::Duration; // If using the `binstart` feature of `esp-idf-sys`, always keep this module imported
 
-const SSID: &str = "IoT";
+const SSID: &str = "SandyWalty";
 const PASS: &str = "EddieVedder7";
 
 const LED_BRIGHTNESS: u8 = 10;
@@ -54,7 +49,6 @@ fn main() -> anyhow::Result<()> {
     let sysloop = EspSystemEventLoop::take()?;
     let peripherals = Peripherals::take().unwrap();
     let pins = peripherals.pins;
-    let nvs = EspDefaultNvsPartition::take()?;
 
     // Configure the LED
     let mut led = Led::new();
@@ -64,35 +58,9 @@ fn main() -> anyhow::Result<()> {
     // For the beacon, we start in client mode and connect to the wifi network. This is so we can
     // update the system time via SNTP. Once we have the time, we disconnect from the wifi network
     // and switch to ESP-NOW mode, since regular wifi and ESP-NOW cannot be used at the same time.
-
-    let mut wifi = Box::new(EspWifi::new(peripherals.modem, sysloop.clone(), Some(nvs))?);
-    wifi.set_configuration(&Configuration::Client(ClientConfiguration {
-        ssid: SSID.into(),
-        password: PASS.into(),
-        ..Default::default()
-    }))?;
-
-    wifi.start()?;
-    if !WifiWait::new(&sysloop)?
-        .wait_with_timeout(Duration::from_secs(20), || wifi.is_started().unwrap())
-    {
-        bail!("Wifi did not start");
-    }
-
-    wifi.connect()?;
-
-    if !EspNetifWait::new::<EspNetif>(wifi.sta_netif(), &sysloop)?.wait_with_timeout(
-        Duration::from_secs(20),
-        || {
-            wifi.is_up().unwrap()
-                && wifi.sta_netif().get_ip_info().unwrap().ip != Ipv4Addr::new(0, 0, 0, 0)
-        },
-    ) {
-        bail!("Wifi did not connect or did not receive a DHCP lease");
-    }
+    let mut wifi = start_wifi(peripherals.modem, sysloop, SSID, PASS)?;
 
     led.set_color(colors::ORANGE, LED_BRIGHTNESS)?;
-    // Update system time
     update_sntp()?;
 
     // Disconnect from wifi and setup for ESP-NOW
@@ -183,7 +151,6 @@ fn recv_data_task(
         // Decode the mac address and message
         let src = mac_to_string(recv_data.src.as_slice());
         match decode_msg(&recv_data.data) {
-
             // If we receive a beacon present message, we forward it to other beacons
             // by wrapping it in a RelayMsg and sending it over ESP-NOW as well as
             // writing it to UART for the gateway.

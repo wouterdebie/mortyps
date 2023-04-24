@@ -1,7 +1,5 @@
-use anyhow::bail;
 use base64::engine::general_purpose;
 use base64::Engine;
-use embedded_svc::wifi;
 use esp_idf_hal::cpu::Core;
 use esp_idf_hal::gpio;
 use esp_idf_hal::peripheral::Peripheral;
@@ -9,16 +7,13 @@ use esp_idf_hal::prelude::*;
 use esp_idf_hal::uart;
 use esp_idf_hal::uart::Uart;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
-use esp_idf_svc::netif::EspNetif;
-use esp_idf_svc::netif::EspNetifWait;
-use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::sntp::SyncStatus;
 use esp_idf_svc::systime::EspSystemTime;
-use esp_idf_svc::wifi::*;
 use esp_idf_sys as _;
 use json::object;
 use log::*;
 use morty_rs::comm::decode_msg;
+use morty_rs::comm::start_wifi;
 use morty_rs::led::colors;
 use morty_rs::led::Led;
 use morty_rs::messages::morty_message::Msg;
@@ -27,7 +22,6 @@ use morty_rs::utils::UartRead;
 use std::collections::VecDeque;
 use std::io::BufRead;
 use std::io::BufReader;
-use std::net::Ipv4Addr;
 use std::time::Duration; // If using the `binstart` feature of `esp-idf-sys`, always keep this module imported
 
 const SSID: &str = "IoT";
@@ -42,7 +36,6 @@ fn main() -> anyhow::Result<()> {
     let sysloop = EspSystemEventLoop::take()?;
     let peripherals = Peripherals::take().unwrap();
     let pins = peripherals.pins;
-    let nvs = EspDefaultNvsPartition::take()?;
 
     // Configure the LED
     let mut led = Led::new();
@@ -50,31 +43,7 @@ fn main() -> anyhow::Result<()> {
     led.set_color(colors::BLUE, LED_BRIGHTNESS)?;
 
     // Configure the wifi
-    let mut wifi = Box::new(EspWifi::new(peripherals.modem, sysloop.clone(), Some(nvs))?);
-    wifi.set_configuration(&wifi::Configuration::Client(wifi::ClientConfiguration {
-        ssid: SSID.into(),
-        password: PASS.into(),
-        ..Default::default()
-    }))?;
-
-    wifi.start()?;
-    if !WifiWait::new(&sysloop)?
-        .wait_with_timeout(Duration::from_secs(20), || wifi.is_started().unwrap())
-    {
-        bail!("Wifi did not start");
-    }
-
-    wifi.connect()?;
-
-    if !EspNetifWait::new::<EspNetif>(wifi.sta_netif(), &sysloop)?.wait_with_timeout(
-        Duration::from_secs(20),
-        || {
-            wifi.is_up().unwrap()
-                && wifi.sta_netif().get_ip_info().unwrap().ip != Ipv4Addr::new(0, 0, 0, 0)
-        },
-    ) {
-        bail!("Wifi did not connect or did not receive a DHCP lease");
-    }
+    let mut wifi = start_wifi(peripherals.modem, sysloop, SSID, PASS)?;
     led.set_color(colors::YELLOW, LED_BRIGHTNESS)?;
 
     // Update system time

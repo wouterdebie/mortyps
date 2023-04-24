@@ -13,6 +13,7 @@ use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::wifi::*;
 use esp_idf_sys as _;
+use esp_idf_sys::esp;
 use esp_idf_sys::esp_deep_sleep_start;
 use esp_idf_sys::esp_sleep_enable_timer_wakeup;
 use lazy_static::lazy_static;
@@ -51,8 +52,16 @@ fn main() -> anyhow::Result<()> {
 
     // Configure Wifi for use with ESP-NOW
     let nvs = EspDefaultNvsPartition::take()?;
-    let mut wifi_driver = Box::new(EspWifi::new(peripherals.modem, sysloop, Some(nvs))?);
-    wifi_driver.start()?;
+    let mut wifi = Box::new(EspWifi::new(peripherals.modem, sysloop, Some(nvs))?);
+
+    esp!(unsafe {
+        esp_idf_sys::esp_wifi_set_protocol(
+            esp_idf_sys::wifi_interface_t_WIFI_IF_STA,
+            esp_idf_sys::WIFI_PROTOCOL_LR.try_into().unwrap(),
+        )
+    })?;
+
+    wifi.start()?;
 
     // Create a thread that reads the UART and transforms this into a protobuf to broadcast
     set_thread_spawn_configuration("uart-thread", 8196, 15, None)?;

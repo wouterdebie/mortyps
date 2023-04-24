@@ -1,7 +1,16 @@
+use std::{net::Ipv4Addr, time::Duration};
+
 use crate::messages::{morty_message, MortyMessage};
-use anyhow::anyhow;
+use anyhow::{anyhow, bail};
 use crc8::Crc8;
-use esp_idf_svc::espnow::{EspNow, PeerInfo, BROADCAST};
+use embedded_svc::wifi::ClientConfiguration;
+use embedded_svc::wifi::Configuration;
+use esp_idf_svc::{
+    espnow::{EspNow, PeerInfo, BROADCAST},
+    eventloop::EspSystemEventLoop,
+    netif::{EspNetif, EspNetifWait},
+    wifi::{EspWifi, WifiWait},
+};
 use log::*;
 use prost::Message;
 
@@ -82,4 +91,36 @@ pub fn mac_to_string(mac: &[u8]) -> String {
         }
     }
     mac_str
+}
+
+pub fn start_wifi(
+    modem: esp_idf_hal::modem::Modem,
+    sysloop: EspSystemEventLoop,
+    ssid: &str,
+    password: &str,
+) -> Result<Box<EspWifi<'static>>, anyhow::Error> {
+    let mut wifi = Box::new(EspWifi::new(modem, sysloop.clone(), None)?);
+    wifi.set_configuration(&Configuration::Client(ClientConfiguration {
+        ssid: ssid.into(),
+        password: password.into(),
+        ..Default::default()
+    }))?;
+    wifi.start()?;
+    if !WifiWait::new(&sysloop)?
+        .wait_with_timeout(Duration::from_secs(20), || wifi.is_started().unwrap())
+    {
+        bail!("Wifi did not start");
+    }
+    wifi.connect()?;
+    if !EspNetifWait::new::<EspNetif>(wifi.sta_netif(), &sysloop)?.wait_with_timeout(
+        Duration::from_secs(20),
+        || {
+            wifi.is_up().unwrap()
+                && wifi.sta_netif().get_ip_info().unwrap().ip != Ipv4Addr::new(0, 0, 0, 0)
+        },
+    ) {
+        bail!("Wifi did not connect or did not receive a DHCP lease");
+    }
+
+    Ok(wifi)
 }
