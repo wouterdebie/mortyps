@@ -43,7 +43,7 @@ fn main() -> anyhow::Result<()> {
     led.set_color(colors::BLUE, LED_BRIGHTNESS)?;
 
     // Configure the wifi
-    let mut wifi = start_wifi(peripherals.modem, sysloop, SSID, PASS)?;
+    let _wifi = start_wifi(peripherals.modem, sysloop, SSID, PASS)?;
     led.set_color(colors::YELLOW, LED_BRIGHTNESS)?;
 
     // Update system time
